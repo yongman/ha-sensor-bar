@@ -55,9 +55,9 @@ final class ClientTests: XCTestCase {
     }
 
     func testConnectionAndReverseProxyPath() async throws {
-        MockURLProtocol.prepare(path: "/home/api/", data: Data(#"{"message":"API running."}"#.utf8))
+        MockURLProtocol.prepare(path: "/home/api", data: Data(#"{"message":"API running."}"#.utf8))
         try await client(baseURL: "https://example.invalid/home").testConnection()
-        XCTAssertEqual(MockURLProtocol.lastRequest?.url?.path, "/home/api/")
+        XCTAssertEqual(MockURLProtocol.lastRequest?.url?.absoluteString, "https://example.invalid/home/api/")
     }
 
     func testSingleEntityEndpoint() async throws {
