@@ -30,6 +30,8 @@ jobs:
           xcodebuild -version
       - name: Run unit tests with coverage
         run: swift test --enable-code-coverage -Xswiftc -warnings-as-errors
+      - name: Test release safety
+        run: python3 -m unittest discover -s scripts/tests -v
       - name: Build app
         run: ./scripts/build-app.sh 1.0.0
       - name: Create DMG and ZIP

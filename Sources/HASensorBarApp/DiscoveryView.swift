@@ -4,7 +4,7 @@ import HASensorBarCore
 struct DiscoveryView: View {
     @ObservedObject var store: AppStore
     let configuration: AppConfiguration
-    let token: String
+    let token: DraftToken
     @Binding var groups: [SensorGroup]
     @Environment(\.dismiss) private var dismiss
     @State private var entities: [HAEntity] = []
@@ -48,6 +48,10 @@ struct DiscoveryView: View {
                                     HStack {
                                         Text(suggestion.group + " · " + suggestion.card.title).font(.headline)
                                         if !suggestion.card.tag.isEmpty { Pill(text: suggestion.card.tag) }
+                                    }
+                                    ForEach(suggestion.warnings, id: \.self) { warning in
+                                        Label(warning, systemImage: "exclamationmark.triangle")
+                                            .font(.caption).foregroundStyle(.orange)
                                     }
                                     ForEach(suggestion.entityIDs, id: \.self) { Text($0).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary) }
                                 }.padding(.vertical, 5)

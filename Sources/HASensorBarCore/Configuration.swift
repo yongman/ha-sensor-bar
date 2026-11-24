@@ -16,11 +16,18 @@ public enum ConfigurationError: LocalizedError {
 
 public enum BaseURL {
     public static func parse(_ input: String) throws -> URL {
-        guard let parts = URLComponents(string: input.trimmingCharacters(in: .whitespacesAndNewlines)),
+        guard var parts = URLComponents(string: input.trimmingCharacters(in: .whitespacesAndNewlines)),
               let scheme = parts.scheme?.lowercased(), ["http", "https"].contains(scheme),
               let host = parts.host, !host.isEmpty,
-              parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
-              let url = parts.url else { throw ConfigurationError.invalidURL }
+              parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil
+        else { throw ConfigurationError.invalidURL }
+        parts.scheme = scheme
+        parts.host = host.lowercased()
+        if (scheme == "https" && parts.port == 443) || (scheme == "http" && parts.port == 80) {
+            parts.port = nil
+        }
+        while parts.percentEncodedPath.hasSuffix("/") { parts.percentEncodedPath.removeLast() }
+        guard let url = parts.url else { throw ConfigurationError.invalidURL }
         return url
     }
 }
@@ -38,6 +45,7 @@ public enum MenuBarMode: String, Codable, CaseIterable, Sendable { case icon, st
 public struct AppConfiguration: Codable, Equatable, Sendable {
     public var version: Int = 1
     public var baseURL: String = ""
+    public var insecureHTTPAllowedFor: String?
     public var refreshInterval: Double = 60
     public var timeout: Double = 15
     public var groups: [SensorGroup] = []
@@ -48,6 +56,18 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
 
     public init() {}
     public var cards: [SensorCard] { groups.flatMap(\.cards) }
+
+    public var allowsInsecureHTTP: Bool {
+        guard let endpoint = try? BaseURL.parse(baseURL), endpoint.scheme == "http",
+              let consent = insecureHTTPAllowedFor else { return false }
+        return endpoint.absoluteString == consent
+    }
+
+    public func connectionURL() throws -> URL {
+        let url = try BaseURL.parse(baseURL)
+        guard url.scheme == "https" || allowsInsecureHTTP else { throw HAClientError.insecureHTTPRequiresConsent }
+        return url
+    }
 
     public func validated() throws -> Self {
         guard version == 1 else { throw ConfigurationError.invalidVersion }
@@ -70,6 +90,8 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
             }
         }
         var result = self
+        if !baseURL.isEmpty { result.baseURL = try BaseURL.parse(baseURL).absoluteString }
+        if !allowsInsecureHTTP { result.insecureHTTPAllowedFor = nil }
         if let primary = primaryCardID, !cards.contains(where: { $0.id == primary }) { result.primaryCardID = nil }
         return result
     }

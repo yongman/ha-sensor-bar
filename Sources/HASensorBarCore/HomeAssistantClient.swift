@@ -5,6 +5,7 @@ import FoundationNetworking
 
 public enum HAClientError: LocalizedError, Equatable {
     case unauthorized, invalidResponse, http(Int), decoding, missingToken, transport
+    case draftTokenEndpointMismatch, insecureHTTPRequiresConsent
     public var errorDescription: String? {
         switch self {
         case .unauthorized: return "Authentication failed. Check the access token in Settings."
@@ -13,6 +14,8 @@ public enum HAClientError: LocalizedError, Equatable {
         case .decoding: return "The server did not return valid Home Assistant sensor data."
         case .missingToken: return "Add a Long-Lived Access Token in Settings."
         case .transport: return "Home Assistant is unreachable. Check the connection and try again."
+        case .draftTokenEndpointMismatch: return "The server changed. Enter a new token for this server."
+        case .insecureHTTPRequiresConsent: return "Allow unencrypted HTTP for this server in Connection settings before connecting."
         }
     }
 }
@@ -38,22 +41,40 @@ public actor HomeAssistantClient: HAClient {
     private let session: URLSession
     private let ownsSession: Bool
 
-    public init(baseURL: String, token: String, timeout: TimeInterval = 15, session: URLSession? = nil) throws {
-        self.baseURL = try BaseURL.parse(baseURL)
+    public init(baseURL: String, token: String, timeout: TimeInterval = 15,
+                allowInsecureHTTP: Bool = false, session: URLSession? = nil) throws {
+        let endpoint = try BaseURL.parse(baseURL)
+        guard endpoint.scheme == "https" || allowInsecureHTTP else { throw HAClientError.insecureHTTPRequiresConsent }
+        self.baseURL = endpoint
         guard !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw HAClientError.missingToken }
         self.token = token.trimmingCharacters(in: .whitespacesAndNewlines)
         self.timeout = timeout
         self.ownsSession = session == nil
+        let configuration = try Self.sessionConfiguration(timeout: timeout)
+        self.session = session ?? URLSession(configuration: configuration, delegate: NoRedirectDelegate(), delegateQueue: nil)
+    }
+
+    static func sessionConfiguration(timeout: TimeInterval) throws -> URLSessionConfiguration {
+        guard timeout.isFinite, (3...120).contains(timeout) else { throw ConfigurationError.invalidInterval }
         let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = timeout
+        configuration.timeoutIntervalForResource = timeout
         configuration.urlCache = nil
         configuration.httpCookieStorage = nil
+        configuration.urlCredentialStorage = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        self.session = session ?? URLSession(configuration: configuration, delegate: NoRedirectDelegate(), delegateQueue: nil)
+        return configuration
     }
 
     deinit { if ownsSession { session.invalidateAndCancel() } }
 
-    public func testConnection() async throws { _ = try await request(path: "api/") }
+    public func testConnection() async throws {
+        struct Status: Decodable { let message: String }
+        let data = try await request(path: "api/")
+        guard let status = try? JSONDecoder().decode(Status.self, from: data),
+              !status.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { throw HAClientError.invalidResponse }
+    }
 
     public func fetchStates() async throws -> [HAEntity] {
         let data = try await request(path: "api/states")

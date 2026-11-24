@@ -33,6 +33,7 @@ playground.xcworkspace
 dist/
 .swiftpm/
 .DS_Store
+__pycache__/
 
 # CocoaPods
 #

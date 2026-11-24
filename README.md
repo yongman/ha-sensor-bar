@@ -14,7 +14,8 @@ opening a dashboard.
 2. Explore **Demo Mode**, or click **Connect Home Assistant**.
 3. Enter a base URL such as `http://homeassistant.local:8123` and a Long-Lived
    Access Token from your Home Assistant profile's Security page.
-4. **Test Connection**, then **Save Changes**.
+4. For HTTP, explicitly enable **Allow unencrypted HTTP for this server**.
+   **Test Connection**, then **Save Changes**.
 5. Under **Cards & Sensors**, choose **Discover Sensors**, check the cards you
    want, **Add Selected**, and save. Recommendations start unselected.
 
@@ -56,6 +57,9 @@ pairs independent 5h/7d entities, and attaches matching extras. Legacy
 `sensor.codex_*` / `sensor.antigravity_*` suggestions remain separate for review.
 Currency entities are never inferred to be quota windows. **All Sensors**
 supports search and custom names. Demo data never replaces your saved layout.
+When multiple sensors match a quota window, discovery displays a warning and
+retains each alternative as a labeled extra field. Review the window binding
+and alternatives in **Cards & Sensors** before saving.
 
 ## Build, test, and package
 
@@ -63,6 +67,7 @@ Select a full Xcode installation with its macOS SDK, then run:
 
 ```bash
 swift test --enable-code-coverage -Xswiftc -warnings-as-errors
+python3 -m unittest discover -s scripts/tests -v
 ./scripts/build-app.sh 1.0.0
 ./scripts/package-release.sh 1.0.0
 ./scripts/verify-release.sh 1.0.0
@@ -84,8 +89,11 @@ Outputs in `dist/`:
 - `demo-preview.png` after the smoke test
 
 The scripts are repeatable and verify the requested version. Run the app with
-`--demo` for interactive preview, or `--smoke-test --snapshot <output.png>` for
-an isolated demo render followed by Settings and a clean exit.
+`--demo` to immediately open the demo popover. Normal startup remains in the
+menu bar without opening a window. The app menu's **Settings…**, **⌘,**, and
+the panel's Settings button open the same four-tab settings window.
+The smoke script checks both normal and demo startup, renders isolated demo
+snapshots, exercises the Settings menu action and reopening, then exits.
 
 ## Automation
 
@@ -96,10 +104,15 @@ architecture, signatures and hashes, and renders a demo/settings smoke test.
 Artifacts include packages, a PNG preview, and LCOV coverage.
 
 **Release** runs on `v<major>.<minor>.<patch>` tags or manually with a numeric
-version. It repeats tests and distribution verification, then creates/updates a
-GitHub Release with DMG, ZIP, both checksum manifests, and English installation
-notes. Manual releases target the selected workflow commit and refuse to reuse
-a tag pointing at another commit.
+version. A read-only macOS build job tests and verifies the packages, then
+uploads a workflow artifact. A separate publish job with repository write
+permission validates the downloaded artifact, creates or resumes a draft, and
+uploads the DMG, ZIP, both checksum manifests, and English installation notes.
+It downloads every uploaded asset and verifies hashes and sizes against the
+build before publishing the draft. Tag and manual runs for the same version
+share one concurrency group. A complete public version is verified and
+preserved on reruns; an incomplete public version fails without replacing its
+assets. Manual releases refuse to reuse a tag pointing at another commit.
 
 ## Architecture and privacy
 
@@ -109,12 +122,20 @@ Configuration is saved atomically to
 Tokens live only in the macOS login Keychain under
 `com.hasensorbar.app.homeassistant`, scoped to the server URL.
 
+Draft tokens are bound to the normalized server endpoint when entered and are
+cleared when editing the URL or closing Settings. Connection, discovery, and
+saving independently reject a draft for a different endpoint.
+
 The app uses only read-only Home Assistant GET endpoints. Its ephemeral
 URLSession disables caching/cookies and refuses redirects. HTTP is supported for
 user-specified IPs, `.local`, and custom DNS hostnames via an explicit ATS
 exception. HTTPS retains normal certificate validation. HTTP sends credentials
-without encryption; use it only on trusted local networks. Enter the final
-server URL, and prefer HTTPS where available.
+without encryption; use it only on trusted local networks and explicitly
+approve it in Connection settings. Approval is scoped to the normalized
+endpoint and required before testing, discovery, saving an HTTP connection,
+or background polling. Imports require fresh HTTP approval. Enter the final
+server URL, and prefer HTTPS where available. The configured 3–120 second
+timeout limits both inactivity and total response transfer time.
 
 Exports omit credentials but contain server URLs and entity IDs; review them
 before sharing. No analytics or telemetry is collected.

@@ -38,6 +38,57 @@ final class DiscoveryConfigurationTests: XCTestCase {
         XCTAssertEqual(result[0].card.extras.count, 1)
     }
 
+    func testDiscoveryPreservesConflictingWindowCandidatesAndWarns() throws {
+        let ids = ["sensor.codex_account_a_5h_quota", "sensor.codex_account_a_5h_remaining",
+                   "sensor.codex_account_a_7d_quota", "sensor.codex_account_a_7d_remaining"]
+        let entities = ids.map { HAEntity(entityID: $0, state: "50", attributes: ["unit_of_measurement": .string("%")]) }
+        for input in [entities, Array(entities.reversed())] {
+            let results = SensorDiscovery.suggest(input)
+            let result = try XCTUnwrap(results.first)
+            XCTAssertEqual(results.count, 1)
+            XCTAssertEqual(result.entityIDs.count, 4)
+            XCTAssertEqual(Set(result.entityIDs), Set(ids))
+            XCTAssertEqual(result.warnings.count, 2)
+            XCTAssertEqual(result.card.extras.count, 2)
+            XCTAssertTrue(result.card.extras.allSatisfy { $0.title.contains("alternative") })
+            XCTAssertEqual(result.card.fiveHour?.binding.entityID, ids[0])
+            XCTAssertEqual(result.card.sevenDay?.binding.entityID, ids[2])
+        }
+    }
+
+    func testHTTPConsentIsEndpointBoundAndDefaultsToDeniedForOldConfigurations() throws {
+        var config = AppConfiguration()
+        config.baseURL = " \nHTTP://HomeAssistant.local:8123/ "
+        XCTAssertFalse(config.allowsInsecureHTTP)
+        XCTAssertThrowsError(try config.connectionURL())
+        config.insecureHTTPAllowedFor = try BaseURL.parse(config.baseURL).absoluteString
+        XCTAssertNoThrow(try config.connectionURL())
+        let restored = try ConfigurationCodec.importData(ConfigurationCodec.export(config))
+        XCTAssertTrue(restored.allowsInsecureHTTP)
+        XCTAssertEqual(restored.baseURL, "http://homeassistant.local:8123")
+        config.baseURL = "http://other.example.invalid:8123"
+        XCTAssertFalse(config.allowsInsecureHTTP)
+        XCTAssertThrowsError(try config.connectionURL())
+        XCTAssertNil(try config.validated().insecureHTTPAllowedFor)
+
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: ConfigurationCodec.export(restored)) as? [String: Any])
+        legacy.removeValue(forKey: "insecureHTTPAllowedFor")
+        let imported = try ConfigurationCodec.importData(JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertFalse(imported.allowsInsecureHTTP)
+        XCTAssertThrowsError(try imported.connectionURL())
+    }
+
+    func testURLNormalizationKeepsDistinctProxyPathsAndPorts() throws {
+        XCTAssertEqual(try BaseURL.parse(" \nHTTPS://EXAMPLE.invalid:443/home/// "),
+                       try BaseURL.parse("https://example.invalid/home"))
+        XCTAssertEqual(try BaseURL.parse("HTTP://EXAMPLE.invalid:80/"),
+                       try BaseURL.parse("http://example.invalid"))
+        XCTAssertNotEqual(try BaseURL.parse("https://example.invalid/home"),
+                          try BaseURL.parse("https://example.invalid/other"))
+        XCTAssertNotEqual(try BaseURL.parse("http://example.invalid:8123"),
+                          try BaseURL.parse("http://example.invalid"))
+    }
+
     func testConfigurationRoundTripContainsNoTokenProperty() throws {
         let configuration = DemoData.configuration
         let data = try ConfigurationCodec.export(configuration)

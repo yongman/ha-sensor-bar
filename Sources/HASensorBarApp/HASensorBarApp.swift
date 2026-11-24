@@ -4,9 +4,15 @@ import Combine
 import HASensorBarCore
 
 @main
-struct HASensorBarApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    var body: some Scene { Settings { EmptyView() } }
+enum HASensorBarApp {
+    @MainActor
+    static func main() {
+        let application = NSApplication.shared
+        let delegate = AppDelegate()
+        application.setActivationPolicy(.accessory)
+        application.delegate = delegate
+        withExtendedLifetime(delegate) { application.run() }
+    }
 }
 
 @MainActor
@@ -26,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             : .standard
         store = AppStore(persistence: configStore)
         store.openSettings = { [weak self] in self?.showSettings() }
+        installMainMenu()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "square.stack.3d.up", accessibilityDescription: "HA Sensor Bar")
@@ -41,8 +48,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Task { @MainActor in self?.updatePresentation() }
         }
         if smoke {
-            store.showDemo()
-            runSmokeTest()
+            if CommandLine.arguments.contains("--demo") {
+                store.showDemo()
+                showPopover()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let self else { exit(1) }
+                let visibleWindows = NSApp.windows.filter { $0.isVisible && $0.level == .normal }
+                precondition(self.settingsWindow == nil, "Startup must not open Settings.")
+                precondition(!visibleWindows.contains { $0.title.contains("Settings") },
+                             "Startup must not open a blank Settings window.")
+                if CommandLine.arguments.contains("--demo") {
+                    precondition(self.store.isDemo && self.popover.isShown, "Demo startup must show the demo popover.")
+                } else {
+                    precondition(visibleWindows.isEmpty, "Normal startup must remain in the menu bar.")
+                }
+                precondition(NSApp.activationPolicy() == .accessory, "The app must remain an accessory.")
+                self.popover.performClose(nil)
+                self.store.showDemo()
+                self.runSmokeTest()
+            }
         } else if CommandLine.arguments.contains("--demo") {
             store.showDemo()
             showPopover()
@@ -50,6 +75,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             store.start()
         }
         updatePresentation()
+    }
+
+    private func installMainMenu() {
+        let menu = NSMenu()
+        let applicationItem = NSMenuItem()
+        let applicationMenu = NSMenu(title: "HA Sensor Bar")
+        applicationMenu.addItem(withTitle: "Settings…", action: #selector(showSettingsAction), keyEquivalent: ",")
+        applicationMenu.addItem(.separator())
+        applicationMenu.addItem(withTitle: "Quit HA Sensor Bar", action: #selector(quit), keyEquivalent: "q")
+        for item in applicationMenu.items { item.target = self }
+        applicationItem.submenu = applicationMenu
+        menu.addItem(applicationItem)
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
+        menu.addItem(editItem)
+        NSApp.mainMenu = menu
     }
 
     private func updatePresentation() {
@@ -105,6 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable],
                                   backing: .buffered, defer: false)
             window.title = "HA Sensor Bar Settings"
+            window.identifier = NSUserInterfaceItemIdentifier("HASensorBarSettings")
             window.minSize = NSSize(width: 820, height: 650)
             window.isReleasedWhenClosed = false
             window.delegate = self
@@ -146,9 +196,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 guard let png = bitmap.representation(using: .png, properties: [:]) else { exit(3) }
                 do { try png.write(to: URL(fileURLWithPath: path)) } catch { exit(4) }
             }
-            self.showSettings()
+            guard let menu = NSApp.mainMenu?.items.first?.submenu,
+                  let item = menu.items.first(where: { $0.keyEquivalent == "," }) else { exit(5) }
+            menu.performActionForItem(at: menu.index(of: item))
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                print("Smoke test passed: demo panel and settings rendered.")
+                guard let settings = self.settingsWindow, settings.isVisible,
+                      settings.contentView is NSHostingView<SettingsView> else { exit(6) }
+                settings.close()
+                menu.performActionForItem(at: menu.index(of: item))
+                guard self.settingsWindow === settings, settings.isVisible,
+                      settings.contentView is NSHostingView<SettingsView> else { exit(7) }
+                print("Smoke test passed: accessory startup, demo, Settings menu shortcut, and Settings reopening.")
                 NSApp.terminate(nil)
             }
         }

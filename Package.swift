@@ -15,6 +15,10 @@ let package = Package(
             name: "HASensorBarCoreTests",
             dependencies: ["HASensorBarCore"],
             resources: [.copy("Fixtures")]
+        ),
+        .testTarget(
+            name: "HASensorBarAppTests",
+            dependencies: ["HASensorBarApp", "HASensorBarCore"]
         )
     ]
 )

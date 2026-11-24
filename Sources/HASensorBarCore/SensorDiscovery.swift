@@ -4,6 +4,7 @@ public struct CardSuggestion: Identifiable, Equatable, Sendable {
     public var id: UUID { card.id }
     public var group: String
     public var card: SensorCard
+    public var warnings: [String] = []
     public var entityIDs: [String] { card.fields.map(\.binding.entityID) }
 }
 
@@ -20,6 +21,7 @@ public enum SensorDiscovery {
         let sensors = sensors(in: entities)
         var cards: [String: SensorCard] = [:]
         var groups: [String: String] = [:]
+        var warnings: [String: [String]] = [:]
         var used = Set<String>()
         let regex = try! NSRegularExpression(pattern: #"^(.*)_(5h|7d)_(remaining|quota)(.*)$"#)
         for entity in sensors {
@@ -42,7 +44,19 @@ public enum SensorDiscovery {
             )
             let field = SensorField(title: window == "5h" ? "5 hours" : "7 days",
                                     binding: FieldBinding(entityID: entity.entityID))
-            if window == "5h" { card.fiveHour = field } else { card.sevenDay = field }
+            let existing = window == "5h" ? card.fiveHour : card.sevenDay
+            if let existing {
+                var alternative = field
+                alternative.title += " alternative (confirm binding)"
+                card.extras.append(alternative)
+                warnings[key, default: []].append(
+                    "Multiple \(field.title.lowercased()) sensors: \(existing.binding.entityID) and \(entity.entityID). Review the window binding and alternative in Cards & Sensors."
+                )
+            } else if window == "5h" {
+                card.fiveHour = field
+            } else {
+                card.sevenDay = field
+            }
             cards[key] = card
             groups[key] = provider
             used.insert(entity.entityID)
@@ -66,7 +80,7 @@ public enum SensorDiscovery {
             if $0.hasPrefix("magpie_") != $1.hasPrefix("magpie_") { return $0.hasPrefix("magpie_") }
             return $0 < $1
         }.compactMap { key in
-            cards[key].map { CardSuggestion(group: groups[key] ?? "Sensors", card: $0) }
+            cards[key].map { CardSuggestion(group: groups[key] ?? "Sensors", card: $0, warnings: warnings[key] ?? []) }
         }
     }
 

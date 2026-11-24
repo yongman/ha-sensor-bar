@@ -40,10 +40,12 @@ final class AppStore: ObservableObject {
         refreshTask?.cancel()
     }
 
-    func save(_ candidate: AppConfiguration, token: String? = nil) throws {
+    func save(_ candidate: AppConfiguration, draftToken: DraftToken = DraftToken()) throws {
         let next = try candidate.validated()
-        if let token, !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            try tokens.write(token.trimmingCharacters(in: .whitespacesAndNewlines), for: next.baseURL)
+        let token = try draftToken.value(for: next.baseURL)
+        if !next.baseURL.isEmpty { _ = try next.connectionURL() }
+        if let token {
+            try tokens.write(token, for: next.baseURL)
         }
         try persistence.save(next)
         generation = UUID()
@@ -102,10 +104,12 @@ final class AppStore: ObservableObject {
         start()
     }
 
-    func makeClient(configuration: AppConfiguration, draftToken: String? = nil) throws -> HomeAssistantClient {
-        let saved = try tokens.read(for: configuration.baseURL)
-        let token = draftToken.flatMap { $0.isEmpty ? nil : $0 } ?? saved ?? ""
-        return try HomeAssistantClient(baseURL: configuration.baseURL, token: token, timeout: configuration.timeout)
+    func makeClient(configuration: AppConfiguration, draftToken: DraftToken = DraftToken()) throws -> HomeAssistantClient {
+        _ = try configuration.connectionURL()
+        let draft = try draftToken.value(for: configuration.baseURL)
+        let token = try draft ?? tokens.read(for: configuration.baseURL) ?? ""
+        return try HomeAssistantClient(baseURL: configuration.baseURL, token: token, timeout: configuration.timeout,
+                                       allowInsecureHTTP: configuration.allowsInsecureHTTP)
     }
 
     func hasSavedToken(for server: String) -> Bool { (try? tokens.read(for: server)) != nil }

@@ -40,6 +40,7 @@ final class ClientTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
         return try HomeAssistantClient(baseURL: baseURL, token: "example-test-token", timeout: 7,
+                                       allowInsecureHTTP: true,
                                        session: URLSession(configuration: configuration))
     }
 
@@ -58,6 +59,40 @@ final class ClientTests: XCTestCase {
         MockURLProtocol.prepare(path: "/home/api", data: Data(#"{"message":"API running."}"#.utf8))
         try await client(baseURL: "https://example.invalid/home").testConnection()
         XCTAssertEqual(MockURLProtocol.lastRequest?.url?.absoluteString, "https://example.invalid/home/api/")
+    }
+
+    func testConnectionRejectsHTMLMissingEmptyAndNonStringMessages() async throws {
+        for body in ["<html>Sign in</html>", "{}", #"{"message":null}"#, #"{"message":42}"#,
+                     #"{"message":""}"#, #"{"message":" \n "}"#, "[]", "null"] {
+            MockURLProtocol.prepare(path: "/api", data: Data(body.utf8))
+            do { try await client().testConnection(); XCTFail("Expected invalid API response") }
+            catch let error as HAClientError { XCTAssertEqual(error, .invalidResponse) }
+        }
+    }
+
+    func testProductionSessionBoundsRequestAndTotalResourceTime() throws {
+        for timeout in [3.0, 7, 120] {
+            let configuration = try HomeAssistantClient.sessionConfiguration(timeout: timeout)
+            XCTAssertEqual(configuration.timeoutIntervalForRequest, timeout)
+            XCTAssertEqual(configuration.timeoutIntervalForResource, timeout)
+            XCTAssertNil(configuration.urlCache)
+            XCTAssertNil(configuration.httpCookieStorage)
+            XCTAssertNil(configuration.urlCredentialStorage)
+        }
+        for timeout in [0.0, 2.9, 121, .infinity, .nan] {
+            XCTAssertThrowsError(try HomeAssistantClient(baseURL: "https://example.invalid",
+                                                        token: "example", timeout: timeout))
+        }
+    }
+
+    func testHTTPRequiresExplicitConsentAfterURLNormalization() throws {
+        for endpoint in ["http://homeassistant.local:8123", " \nHTTP://homeassistant.local:8123/ "] {
+            XCTAssertThrowsError(try HomeAssistantClient(baseURL: endpoint, token: "example")) {
+                XCTAssertEqual($0 as? HAClientError, .insecureHTTPRequiresConsent)
+            }
+            XCTAssertNoThrow(try HomeAssistantClient(baseURL: endpoint, token: "example", allowInsecureHTTP: true))
+        }
+        XCTAssertNoThrow(try HomeAssistantClient(baseURL: "https://example.invalid", token: "example"))
     }
 
     func testSingleEntityEndpoint() async throws {

@@ -7,7 +7,7 @@ import HASensorBarCore
 struct SettingsView: View {
     @ObservedObject var store: AppStore
     @State private var draft: AppConfiguration
-    @State private var token = ""
+    @State private var token = DraftToken()
     @State private var message = ""
     @State private var failed = false
     @State private var testing = false
@@ -46,9 +46,9 @@ struct SettingsView: View {
                 Spacer()
                 Button("Save Changes") {
                     perform {
-                        try store.save(draft, token: token.isEmpty ? nil : token)
+                        try store.save(draft, draftToken: token)
                         draft = store.configuration
-                        token = ""
+                        token = DraftToken()
                         return "Settings saved."
                     }
                 }.buttonStyle(.borderedProminent).tint(.teal).keyboardShortcut("s", modifiers: .command)
@@ -57,21 +57,42 @@ struct SettingsView: View {
         }
         .background(GlassBackground(style: draft.glassStyle))
         .sheet(isPresented: $discovering) { DiscoveryView(store: store, configuration: draft, token: token, groups: $draft.groups) }
-        .onDisappear { token = ""; connectionTask?.cancel() }
+        .onChange(of: draft.baseURL) { old, new in
+            token = DraftToken()
+            if (try? BaseURL.parse(old)) != (try? BaseURL.parse(new)) {
+                draft.insecureHTTPAllowedFor = nil
+            }
+            connectionTask?.cancel()
+            message = ""
+        }
+        .onChange(of: draft.insecureHTTPAllowedFor) { _, _ in connectionTask?.cancel() }
+        .onDisappear { token = DraftToken(); connectionTask?.cancel() }
     }
 
     private var connection: some View {
         Form {
             Section("Home Assistant") {
-                TextField("Base URL", text: $draft.baseURL, prompt: Text("http://homeassistant.local:8123"))
+                TextField("Base URL", text: Binding(get: { draft.baseURL }, set: {
+                    token = DraftToken()
+                    draft.insecureHTTPAllowedFor = nil
+                    connectionTask?.cancel()
+                    draft.baseURL = $0
+                }), prompt: Text("http://homeassistant.local:8123"))
                     .textContentType(.URL)
                 SecureField(store.hasSavedToken(for: draft.baseURL) ? "Token saved in Keychain · enter to replace" : "Long-Lived Access Token",
-                            text: $token)
+                            text: Binding(get: { token.value }, set: { value in
+                                perform { token = try DraftToken(value: value, server: draft.baseURL); return "" }
+                            }))
+                    .disabled((try? BaseURL.parse(draft.baseURL)) == nil)
                 Text("Create a token from your Home Assistant profile → Security. The token is saved only in macOS Keychain and is scoped to this server URL.")
                     .font(.caption).foregroundStyle(.secondary)
-                if draft.baseURL.lowercased().hasPrefix("http://") {
+                if let endpoint = try? BaseURL.parse(draft.baseURL), endpoint.scheme == "http" {
                     Label("HTTP sends your token without encryption. Use it only on a trusted local network.",
                           systemImage: "network.badge.shield.half.filled").font(.caption).foregroundStyle(.secondary)
+                    Toggle("Allow unencrypted HTTP for this server", isOn: Binding(
+                        get: { draft.allowsInsecureHTTP },
+                        set: { draft.insecureHTTPAllowedFor = $0 ? endpoint.absoluteString : nil }
+                    ))
                 }
                 HStack {
                     Button(testing ? "Testing…" : "Test Connection") {
@@ -89,7 +110,7 @@ struct SettingsView: View {
                         }
                     }.disabled(testing)
                     Button("Forget Saved Token", role: .destructive) {
-                        perform { try store.removeToken(for: draft.baseURL); token = ""; return "Saved token removed." }
+                        perform { try store.removeToken(for: draft.baseURL); token = DraftToken(); return "Saved token removed." }
                     }.disabled(!store.hasSavedToken(for: draft.baseURL))
                 }
             }
@@ -199,7 +220,8 @@ struct SettingsView: View {
                                 throw NSError(domain: "Import", code: 1, userInfo: [NSLocalizedDescriptionKey: "Configuration is too large (maximum 2 MB)."])
                             }
                             draft = try ConfigurationCodec.importData(data)
-                            token = ""
+                            draft.insecureHTTPAllowedFor = nil
+                            token = DraftToken()
                             return "Imported layout ready. Review it, then save. Add a token if this server is new."
                         }
                     }
