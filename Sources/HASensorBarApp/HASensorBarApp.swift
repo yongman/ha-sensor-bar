@@ -66,10 +66,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 precondition(!visibleWindows.contains { $0.title.contains("Settings") },
                              "Startup must not open a blank Settings window.")
                 if demo {
+                    let windowVisible = self.popover.contentViewController?.view.window?.isVisible == true
+                    let foregroundPID = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1
+                    let state = "Demo smoke: pinned=\(self.store.pinned), shown=\(self.popover.isShown), "
+                        + "windowVisible=\(windowVisible), foregroundPID=\(foregroundPID), "
+                        + "anchorAttached=\(self.statusItem.button?.window != nil)\n"
+                    FileHandle.standardError.write(Data(state.utf8))
                     precondition(self.store.isDemo && self.store.pinned
                                  && self.popover.behavior == .applicationDefined
                                  && self.popover.isShown
-                                 && self.popover.contentViewController?.view.window?.isVisible == true,
+                                 && windowVisible,
                                  "Demo startup must keep the pinned demo popover visible after focus changes.")
                     if let index = CommandLine.arguments.firstIndex(of: "--foreground-pid"),
                        CommandLine.arguments.indices.contains(index + 1),
@@ -152,12 +158,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         popoverPresenter.show { [weak self] in
             guard let self else { return false }
             NSApp.activate()
-            guard let button = self.statusItem.button, let window = button.window,
-                  window.isVisible else { return false }
+            guard let button = self.statusItem.button, let window = button.window else { return false }
             window.contentView?.layoutSubtreeIfNeeded()
             button.layoutSubtreeIfNeeded()
             guard !button.bounds.isEmpty else { return false }
             self.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            if self.store.pinned { self.popover.contentViewController?.view.window?.hidesOnDeactivate = false }
             self.popover.contentViewController?.view.window?.makeKeyAndOrderFront(nil)
             return self.popover.isShown && self.popover.contentViewController?.view.window?.isVisible == true
         }
