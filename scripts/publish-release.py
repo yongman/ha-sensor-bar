@@ -122,12 +122,15 @@ def publish(version, commit, repo, directory=Path("dist"), command=run):
         verify_remote(repo, version, metadata, command)
         print(f"{tag} is already complete and public; existing assets were preserved.")
         return
-    fields = ("--raw-field", f"target_commitish={commit}",
+    # GitHub can replace a draft's tag with an untagged-* placeholder when a
+    # metadata update omits tag_name. Carry it through every release mutation.
+    fields = ("--raw-field", f"tag_name={tag}",
+              "--raw-field", f"target_commitish={commit}",
               "--raw-field", f"name=HA Sensor Bar {version}",
               "--field", "body=@docs/RELEASE_NOTES.md")
     if metadata is None:
         metadata = json.loads(command("gh", "api", f"repos/{repo}/releases", "--method", "POST",
-                                      "--raw-field", f"tag_name={tag}", "--field", "draft=true", *fields))
+                                      "--field", "draft=true", *fields))
     release_id = metadata["id"]
     endpoint = f"repos/{repo}/releases/{release_id}"
     metadata = get_release(repo, release_id, tag, command)
@@ -146,7 +149,11 @@ def publish(version, commit, repo, directory=Path("dist"), command=run):
     if not metadata["draft"]:
         raise ValueError("Expected an unpublished draft before asset verification.")
     verify_remote(repo, version, metadata, command, expected_directory=directory)
-    command("gh", "api", endpoint, "--method", "PATCH", "--field", "draft=false")
+    command("gh", "api", endpoint, "--method", "PATCH",
+            "--raw-field", f"tag_name={tag}", "--field", "draft=false")
+    metadata = get_release(repo, release_id, tag, command)
+    if metadata["draft"]:
+        raise ValueError("The verified release is still a draft.")
     print(f"Published {tag} after downloading and verifying all release assets.")
 
 

@@ -113,10 +113,15 @@ uploads the DMG, ZIP, both checksum manifests, and English installation notes.
 It finds existing drafts through paginated release listings, then uses release
 and asset IDs for uploads, downloads, verification, and publication. It verifies
 downloaded hashes and sizes against the build before publishing the draft.
+Every draft update includes its version tag, and publication is confirmed by
+reading the release back by ID.
 Tag and manual runs for the same version
 share one concurrency group. A complete public version is verified and
 preserved on reruns; an incomplete public version fails without replacing its
-assets. Manual releases refuse to reuse a tag pointing at another commit.
+assets. A manual retry of an existing version builds the source at its original
+tag and uses the selected workflow revision's publisher, so publishing fixes do
+not require moving the tag. The publisher rejects a commit that differs from
+the version tag.
 
 ## Architecture and privacy
 
