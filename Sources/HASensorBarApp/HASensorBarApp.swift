@@ -59,6 +59,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updatePresentation()
         if demo { showPopover() }
         if smoke {
+            if demo, let index = CommandLine.arguments.firstIndex(of: "--foreground-pid"),
+               CommandLine.arguments.indices.contains(index + 1),
+               let pid = Int32(CommandLine.arguments[index + 1]) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    if let application = NSRunningApplication(processIdentifier: pid) {
+                        NSApp.yieldActivation(to: application)
+                    }
+                }
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                 guard let self else { exit(1) }
                 let visibleWindows = NSApp.windows.filter { $0.isVisible && $0.level == .normal }
