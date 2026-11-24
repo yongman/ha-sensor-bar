@@ -92,8 +92,10 @@ The scripts are repeatable and verify the requested version. Run the app with
 `--demo` to immediately open the demo popover. Normal startup remains in the
 menu bar without opening a window. The app menu's **Settings…**, **⌘,**, and
 the panel's Settings button open the same four-tab settings window.
-The smoke script checks both normal and demo startup, renders isolated demo
-snapshots, exercises the Settings menu action and reopening, then exits.
+The smoke script checks normal startup and three demo launches with another
+foreground application. Demo launch opens a pinned panel that stays visible
+across focus changes. The script renders isolated snapshots, exercises the
+Settings menu action and reopening, then exits.
 
 ## Automation
 
@@ -108,8 +110,10 @@ version. A read-only macOS build job tests and verifies the packages, then
 uploads a workflow artifact. A separate publish job with repository write
 permission validates the downloaded artifact, creates or resumes a draft, and
 uploads the DMG, ZIP, both checksum manifests, and English installation notes.
-It downloads every uploaded asset and verifies hashes and sizes against the
-build before publishing the draft. Tag and manual runs for the same version
+It finds existing drafts through paginated release listings, then uses release
+and asset IDs for uploads, downloads, verification, and publication. It verifies
+downloaded hashes and sizes against the build before publishing the draft.
+Tag and manual runs for the same version
 share one concurrency group. A complete public version is verified and
 preserved on reruns; an incomplete public version fails without replacing its
 assets. Manual releases refuse to reuse a tag pointing at another commit.
@@ -132,8 +136,10 @@ user-specified IPs, `.local`, and custom DNS hostnames via an explicit ATS
 exception. HTTPS retains normal certificate validation. HTTP sends credentials
 without encryption; use it only on trusted local networks and explicitly
 approve it in Connection settings. Approval is scoped to the normalized
-endpoint and required before testing, discovery, saving an HTTP connection,
-or background polling. Imports require fresh HTTP approval. Enter the final
+endpoint and required before testing, discovery, saving new HTTP credentials,
+or background polling. Turning approval off and saving persists the revocation
+and stops active polling without changing the saved token. Imports require fresh
+HTTP approval. Enter the final
 server URL, and prefer HTTPS where available. The configured 3–120 second
 timeout limits both inactivity and total response transfer time.
 

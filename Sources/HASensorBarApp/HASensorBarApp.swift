@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var store: AppStore!
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
+    private let popoverPresenter = PopoverPresenter()
     private var settingsWindow: NSWindow?
     private var subscription: AnyCancellable?
     private var smokeWindow: NSWindow?
@@ -27,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         let smoke = CommandLine.arguments.contains("--smoke-test")
+        let demo = CommandLine.arguments.contains("--demo")
         let configStore: ConfigurationStore = smoke
             ? ConfigurationStore(url: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "/configuration.json"))
             : .standard
@@ -47,34 +49,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         subscription = store.objectWillChange.sink { [weak self] _ in
             Task { @MainActor in self?.updatePresentation() }
         }
+        if demo {
+            store.showDemo()
+            // A launch preview must survive activation changes from the user's desktop.
+            store.pinned = true
+        } else if !smoke {
+            store.start()
+        }
+        updatePresentation()
+        if demo { showPopover() }
         if smoke {
-            if CommandLine.arguments.contains("--demo") {
-                store.showDemo()
-                showPopover()
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                 guard let self else { exit(1) }
                 let visibleWindows = NSApp.windows.filter { $0.isVisible && $0.level == .normal }
                 precondition(self.settingsWindow == nil, "Startup must not open Settings.")
                 precondition(!visibleWindows.contains { $0.title.contains("Settings") },
                              "Startup must not open a blank Settings window.")
-                if CommandLine.arguments.contains("--demo") {
-                    precondition(self.store.isDemo && self.popover.isShown, "Demo startup must show the demo popover.")
+                if demo {
+                    precondition(self.store.isDemo && self.store.pinned
+                                 && self.popover.behavior == .applicationDefined
+                                 && self.popover.isShown
+                                 && self.popover.contentViewController?.view.window?.isVisible == true,
+                                 "Demo startup must keep the pinned demo popover visible after focus changes.")
+                    if let index = CommandLine.arguments.firstIndex(of: "--foreground-pid"),
+                       CommandLine.arguments.indices.contains(index + 1),
+                       let foregroundPID = Int32(CommandLine.arguments[index + 1]) {
+                        precondition(NSWorkspace.shared.frontmostApplication?.processIdentifier == foregroundPID,
+                                     "The smoke launcher must own foreground focus while the demo stays visible.")
+                    }
                 } else {
                     precondition(visibleWindows.isEmpty, "Normal startup must remain in the menu bar.")
                 }
                 precondition(NSApp.activationPolicy() == .accessory, "The app must remain an accessory.")
-                self.popover.performClose(nil)
+                self.closePopover()
                 self.store.showDemo()
                 self.runSmokeTest()
             }
-        } else if CommandLine.arguments.contains("--demo") {
-            store.showDemo()
-            showPopover()
-        } else {
-            store.start()
         }
-        updatePresentation()
     }
 
     private func installMainMenu() {
@@ -132,15 +143,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             statusItem.button?.performClick(nil)
             statusItem.menu = nil
         } else if popover.isShown {
-            popover.performClose(nil)
+            closePopover()
         } else { showPopover() }
     }
 
     private func showPopover() {
-        guard let button = statusItem.button else { return }
-        NSApp.activate()
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
+        updatePresentation()
+        popoverPresenter.show { [weak self] in
+            guard let self else { return false }
+            NSApp.activate()
+            guard let button = self.statusItem.button, let window = button.window,
+                  window.isVisible else { return false }
+            window.contentView?.layoutSubtreeIfNeeded()
+            button.layoutSubtreeIfNeeded()
+            guard !button.bounds.isEmpty else { return false }
+            self.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            self.popover.contentViewController?.view.window?.makeKeyAndOrderFront(nil)
+            return self.popover.isShown && self.popover.contentViewController?.view.window?.isVisible == true
+        }
+    }
+
+    private func closePopover() {
+        popoverPresenter.cancel()
+        popover.performClose(nil)
     }
 
     @objc private func refreshNow() { Task { await store.refresh() } }
@@ -148,7 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func quit() { NSApp.terminate(nil) }
 
     private func showSettings() {
-        popover.performClose(nil)
+        closePopover()
         if settingsWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 740),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -212,6 +237,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) { store.shutdown() }
+    func applicationWillTerminate(_ notification: Notification) {
+        popoverPresenter.cancel()
+        store.shutdown()
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
