@@ -49,7 +49,8 @@ struct SettingsView: View {
                         try store.save(draft, draftToken: token)
                         draft = store.configuration
                         token = DraftToken()
-                        return "Settings saved."
+                        return (try? BaseURL.parse(draft.baseURL))?.scheme == "http" && !draft.allowsInsecureHTTP
+                            ? "Settings saved. HTTP is disabled and polling is paused." : "Settings saved."
                     }
                 }.buttonStyle(.borderedProminent).tint(.teal).keyboardShortcut("s", modifiers: .command)
                     .disabled(testing)
@@ -91,8 +92,13 @@ struct SettingsView: View {
                           systemImage: "network.badge.shield.half.filled").font(.caption).foregroundStyle(.secondary)
                     Toggle("Allow unencrypted HTTP for this server", isOn: Binding(
                         get: { draft.allowsInsecureHTTP },
-                        set: { draft.insecureHTTPAllowedFor = $0 ? endpoint.absoluteString : nil }
+                        set: {
+                            draft.insecureHTTPAllowedFor = $0 ? endpoint.absoluteString : nil
+                            if !$0 { token = DraftToken() }
+                        }
                     ))
+                    Text("Turn this off and save to stop HTTP polling. Your saved token stays in Keychain.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 HStack {
                     Button(testing ? "Testing…" : "Test Connection") {

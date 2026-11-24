@@ -15,15 +15,21 @@ final class AppStore: ObservableObject {
     @Published var notice: String?
     private let persistence: ConfigurationStore
     private let tokens: any TokenStore
+    private let clientFactory: (AppConfiguration, String) throws -> any HAClient
     private let scheduler = RefreshScheduler()
     private var refreshTask: Task<Void, Never>?
     private var generation = UUID()
     private var demoConfiguration = DemoData.configuration
     var openSettings: () -> Void = {}
 
-    init(persistence: ConfigurationStore = .standard, tokens: any TokenStore = KeychainTokenStore()) {
+    init(persistence: ConfigurationStore = .standard, tokens: any TokenStore = KeychainTokenStore(),
+         clientFactory: @escaping (AppConfiguration, String) throws -> any HAClient = { configuration, token in
+             try HomeAssistantClient(baseURL: configuration.baseURL, token: token, timeout: configuration.timeout,
+                                     allowInsecureHTTP: configuration.allowsInsecureHTTP)
+         }) {
         self.persistence = persistence
         self.tokens = tokens
+        self.clientFactory = clientFactory
         do { configuration = try persistence.load() }
         catch { errorMessage = "Configuration could not be loaded. Import a valid backup in Settings." }
     }
@@ -32,6 +38,10 @@ final class AppStore: ObservableObject {
     var hasConnection: Bool { !configuration.baseURL.isEmpty }
 
     func start() {
+        scheduler.stop()
+        guard hasConnection else { return }
+        do { _ = try configuration.connectionURL() }
+        catch { errorMessage = error.localizedDescription; return }
         scheduler.start(interval: configuration.refreshInterval) { [weak self] in await self?.refresh() }
     }
 
@@ -42,10 +52,11 @@ final class AppStore: ObservableObject {
 
     func save(_ candidate: AppConfiguration, draftToken: DraftToken = DraftToken()) throws {
         let next = try candidate.validated()
-        let token = try draftToken.value(for: next.baseURL)
-        if !next.baseURL.isEmpty { _ = try next.connectionURL() }
-        if let token {
-            try tokens.write(token, for: next.baseURL)
+        // A disabled HTTP connection can be saved without accessing credentials.
+        if !next.baseURL.isEmpty, (try? next.connectionURL()) != nil {
+            if let token = try draftToken.value(for: next.baseURL) {
+                try tokens.write(token, for: next.baseURL)
+            }
         }
         try persistence.save(next)
         generation = UUID()
@@ -104,12 +115,11 @@ final class AppStore: ObservableObject {
         start()
     }
 
-    func makeClient(configuration: AppConfiguration, draftToken: DraftToken = DraftToken()) throws -> HomeAssistantClient {
+    func makeClient(configuration: AppConfiguration, draftToken: DraftToken = DraftToken()) throws -> any HAClient {
         _ = try configuration.connectionURL()
         let draft = try draftToken.value(for: configuration.baseURL)
         let token = try draft ?? tokens.read(for: configuration.baseURL) ?? ""
-        return try HomeAssistantClient(baseURL: configuration.baseURL, token: token, timeout: configuration.timeout,
-                                       allowInsecureHTTP: configuration.allowsInsecureHTTP)
+        return try clientFactory(configuration, token)
     }
 
     func hasSavedToken(for server: String) -> Bool { (try? tokens.read(for: server)) != nil }
@@ -133,6 +143,7 @@ final class AppStore: ObservableObject {
         let task = Task { [weak self] in
             guard let self else { return }
             do {
+                try Task.checkCancellation()
                 let client = try makeClient(configuration: configuration)
                 let result = try await client.fetchStates()
                 try Task.checkCancellation()
