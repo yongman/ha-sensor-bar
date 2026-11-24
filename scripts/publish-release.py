@@ -48,7 +48,11 @@ def verify_assets(directory, version):
     return names
 
 
-def run(*args):
+def run(*args, output=None):
+    if output is not None:
+        with output.open("wb") as destination:
+            subprocess.run(args, check=True, stdout=destination, stderr=subprocess.PIPE)
+        return ""
     return subprocess.run(args, check=True, text=True, capture_output=True).stdout
 
 
@@ -61,7 +65,29 @@ def release_metadata(repo, tag, command=run):
         raise
 
 
-def verify_remote(repo, tag, version, metadata, command=run, expected_directory=None):
+def find_release(repo, tag, command=run):
+    published = release_metadata(repo, tag, command)
+    if published is not None:
+        return published
+    page = 1
+    while True:
+        releases = json.loads(command("gh", "api", f"repos/{repo}/releases?per_page=100&page={page}"))
+        for release in releases:
+            if release["tag_name"] == tag:
+                return release
+        if len(releases) < 100:
+            return None
+        page += 1
+
+
+def get_release(repo, release_id, tag, command=run):
+    metadata = json.loads(command("gh", "api", f"repos/{repo}/releases/{release_id}"))
+    if metadata["id"] != release_id or metadata["tag_name"] != tag:
+        raise ValueError("The release identity changed.")
+    return metadata
+
+
+def verify_remote(repo, version, metadata, command=run, expected_directory=None):
     names = asset_names(version)
     assets = {asset["name"]: asset for asset in metadata["assets"]}
     if any(name not in assets or assets[name]["size"] <= 0 or
@@ -69,8 +95,9 @@ def verify_remote(repo, tag, version, metadata, command=run, expected_directory=
         raise ValueError("The release does not contain every completed asset.")
     with tempfile.TemporaryDirectory(prefix="ha-sensor-bar-release-") as temporary:
         directory = Path(temporary)
-        patterns = [argument for name in names for argument in ("--pattern", name)]
-        command("gh", "release", "download", tag, "--repo", repo, "--dir", temporary, *patterns)
+        for name in names:
+            command("gh", "api", f"repos/{repo}/releases/assets/{assets[name]['id']}",
+                    "--header", "Accept: application/octet-stream", output=directory / name)
         verify_assets(directory, version)
         for name in names:
             if (directory / name).stat().st_size != assets[name]["size"]:
@@ -89,27 +116,37 @@ def publish(version, commit, repo, directory=Path("dist"), command=run):
         tagged_commit = None
     if tagged_commit and tagged_commit != commit:
         raise ValueError("The version tag points to a different commit.")
-    metadata = release_metadata(repo, tag, command)
+    metadata = find_release(repo, tag, command)
     if metadata and not metadata["draft"]:
-        verify_remote(repo, tag, version, metadata, command)
+        metadata = get_release(repo, metadata["id"], tag, command)
+        verify_remote(repo, version, metadata, command)
         print(f"{tag} is already complete and public; existing assets were preserved.")
         return
+    fields = ("--raw-field", f"target_commitish={commit}",
+              "--raw-field", f"name=HA Sensor Bar {version}",
+              "--field", "body=@docs/RELEASE_NOTES.md")
     if metadata is None:
-        command("gh", "release", "create", tag, "--repo", repo, "--draft",
-                "--target", commit, "--title", f"HA Sensor Bar {version}",
-                "--notes-file", "docs/RELEASE_NOTES.md")
-    else:
-        command("gh", "release", "edit", tag, "--repo", repo, "--draft=true",
-                "--target", commit, "--title", f"HA Sensor Bar {version}",
-                "--notes-file", "docs/RELEASE_NOTES.md")
+        metadata = json.loads(command("gh", "api", f"repos/{repo}/releases", "--method", "POST",
+                                      "--raw-field", f"tag_name={tag}", "--field", "draft=true", *fields))
+    release_id = metadata["id"]
+    endpoint = f"repos/{repo}/releases/{release_id}"
+    metadata = get_release(repo, release_id, tag, command)
+    if not metadata["draft"]:
+        raise ValueError("Expected an unpublished draft before asset upload.")
+    command("gh", "api", endpoint, "--method", "PATCH", *fields)
     # Replacement is confined to a draft. A failed upload leaves it unpublished.
-    command("gh", "release", "upload", tag, "--repo", repo,
-            *(str(directory / name) for name in names), "--clobber")
-    metadata = release_metadata(repo, tag, command)
-    if not metadata or not metadata["draft"]:
+    for asset in metadata["assets"]:
+        if asset["name"] in names:
+            command("gh", "api", f"repos/{repo}/releases/assets/{asset['id']}", "--method", "DELETE")
+    for name in names:
+        command("gh", "api", f"https://uploads.github.com/{endpoint}/assets?name={name}",
+                "--method", "POST", "--header", "Content-Type: application/octet-stream",
+                "--input", str(directory / name))
+    metadata = get_release(repo, release_id, tag, command)
+    if not metadata["draft"]:
         raise ValueError("Expected an unpublished draft before asset verification.")
-    verify_remote(repo, tag, version, metadata, command, expected_directory=directory)
-    command("gh", "release", "edit", tag, "--repo", repo, "--draft=false")
+    verify_remote(repo, version, metadata, command, expected_directory=directory)
+    command("gh", "api", endpoint, "--method", "PATCH", "--field", "draft=false")
     print(f"Published {tag} after downloading and verifying all release assets.")
 
 
