@@ -24,6 +24,8 @@ class FakeGitHub:
         self.api_error_endpoint = None
         self.other_releases = []
         self.publish_during_upload = False
+        self.keep_draft_on_publish = False
+        self.change_tag_on_publish = False
 
     def seed_release(self, draft=True):
         self.metadata = {"id": 42, "tag_name": "v1.0.0", "draft": draft, "assets": []}
@@ -62,8 +64,14 @@ class FakeGitHub:
             assert self.metadata is not None, args
             if method == "PATCH":
                 assert self.metadata["draft"], "Public releases must never be modified."
+                # Reproduce GitHub's observed draft-tag replacement when an
+                # update omits tag_name, including the final publish request.
+                if "tag_name=v1.0.0" not in args:
+                    self.metadata["tag_name"] = "untagged-example"
                 if "draft=false" in args:
-                    self.metadata["draft"] = False
+                    self.metadata["draft"] = self.keep_draft_on_publish
+                    if self.change_tag_on_publish:
+                        self.metadata["tag_name"] = "unexpected-tag"
                 else:
                     assert "target_commitish=example-commit" in args, args
             else:
@@ -131,9 +139,28 @@ class PublishReleaseTests(unittest.TestCase):
         self.assertEqual(self.github.calls[publish][2], "repos/example/repository/releases/42")
         id_reads = [call for call in self.github.calls
                     if call[2] == "repos/example/repository/releases/42" and "--method" not in call]
-        self.assertEqual(len(id_reads), 2)
+        self.assertEqual(len(id_reads), 3)
         self.assertEqual(sum("/tags/" in call[2] for call in self.github.calls), 1)
         self.assertEqual(set(self.github.remote), set(self.names))
+
+    def test_metadata_update_and_publication_preserve_the_version_tag(self):
+        self.github.seed_release()
+        self.publish()
+        updates = [call for call in self.github.mutations if "PATCH" in call]
+        self.assertEqual(len(updates), 2)
+        self.assertTrue(all("tag_name=v1.0.0" in call for call in updates))
+        self.assertEqual(self.github.metadata["tag_name"], "v1.0.0")
+        self.assertFalse(self.github.metadata["draft"])
+
+    def test_publish_response_that_remains_a_draft_is_not_reported_as_success(self):
+        self.github.keep_draft_on_publish = True
+        with self.assertRaisesRegex(ValueError, "still a draft"):
+            self.publish()
+
+    def test_publish_response_with_another_tag_is_not_reported_as_success(self):
+        self.github.change_tag_on_publish = True
+        with self.assertRaisesRegex(ValueError, "identity changed"):
+            self.publish()
 
     def test_failed_upload_keeps_a_draft(self):
         self.github.fail_upload = True
