@@ -1,0 +1,67 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Numeric version (for example, 1.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select Xcode 16
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+      - name: Resolve version and release commit
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          VERSION="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          if git show-ref --verify --quiet "refs/tags/v$VERSION"; then
+            test "$(git rev-list -n 1 "v$VERSION")" = "$(git rev-parse HEAD)"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          test "$(uname -m)" = arm64
+      - name: Run tests
+        run: swift test -Xswiftc -warnings-as-errors
+      - name: Build
+        run: ./scripts/build-app.sh "$VERSION"
+      - name: Package
+        run: ./scripts/package-release.sh "$VERSION"
+      - name: Verify packages
+        run: ./scripts/verify-release.sh "$VERSION"
+      - name: Smoke test
+        run: ./scripts/smoke-test.sh
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$VERSION"
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --target "$GITHUB_SHA" \
+              --title "HA Sensor Bar $VERSION" --notes-file docs/RELEASE_NOTES.md
+          else
+            gh release edit "$TAG" --notes-file docs/RELEASE_NOTES.md
+          fi
+          gh release upload "$TAG" \
+            "dist/HA-Sensor-Bar-$VERSION-arm64.dmg" \
+            "dist/HA-Sensor-Bar-$VERSION-arm64.zip" \
+            "dist/HA-Sensor-Bar-$VERSION-arm64.sha256" \
+            dist/SHA256SUMS.txt --clobber

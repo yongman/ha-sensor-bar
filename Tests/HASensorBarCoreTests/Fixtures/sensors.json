@@ -1,0 +1,46 @@
+[
+  {
+    "entity_id": "sensor.magpie_codex_account_a_5h_remaining",
+    "state": "87.86",
+    "attributes": {
+      "friendly_name": "Codex Account A 5h Remaining",
+      "unit_of_measurement": "%",
+      "windows": {"weekly": {"remaining": "45.5", "reset_at": "2026-02-20T10:00:00.123+00:00"}},
+      "models": [{"remaining": 23.5}]
+    },
+    "last_changed": "2026-02-18T06:00:00.123456+00:00",
+    "last_updated": "2026-02-18T06:30:00.654321+00:00"
+  },
+  {
+    "entity_id": "sensor.magpie_codex_account_a_7d_remaining",
+    "state": "0",
+    "attributes": {"unit_of_measurement": "%"},
+    "last_updated": "2026-02-18T06:30:00+00:00"
+  },
+  {
+    "entity_id": "sensor.magpie_codex_account_a_image_generation_remaining",
+    "state": "unavailable",
+    "attributes": {"unit_of_measurement": "%"}
+  },
+  {
+    "entity_id": "sensor.magpie_antigravity_account_c_gemini_5h_remaining",
+    "state": "98.2",
+    "attributes": {"unit_of_measurement": "%"}
+  },
+  {
+    "entity_id": "sensor.magpie_antigravity_account_c_gemini_7d_remaining",
+    "state": "unknown",
+    "attributes": {"unit_of_measurement": "%"}
+  },
+  {
+    "entity_id": "sensor.magpie_antigravity_account_c_gemini_4_argon_7d_remaining",
+    "state": "66.8",
+    "attributes": {"unit_of_measurement": "%"}
+  },
+  {"entity_id": "sensor.codex_5h_quota", "state": "32.5", "attributes": {"unit_of_measurement": "%"}},
+  {"entity_id": "sensor.codex_7d_quota", "state": "0.0", "attributes": {"unit_of_measurement": "%"}},
+  {"entity_id": "sensor.codex_7d_quota_pro", "state": "unavailable", "attributes": {"unit_of_measurement": "%"}},
+  {"entity_id": "sensor.codex_balance", "state": "123.45", "attributes": {"unit_of_measurement": "CNY"}},
+  {"entity_id": "sensor.custom_credit", "state": "10.5", "attributes": {"unit_of_measurement": "USD"}},
+  {"entity_id": "light.office", "state": "on", "attributes": {}}
+]
