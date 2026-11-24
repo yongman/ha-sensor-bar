@@ -70,6 +70,15 @@ final class ClientTests: XCTestCase {
         }
     }
 
+    func testConnectionRejectsUnrelatedAndInexactStatusMessages() async throws {
+        for message in ["Sign in required", "API running", "api running.", " API running. ", "API running.\n"] {
+            let data = try JSONSerialization.data(withJSONObject: ["message": message])
+            MockURLProtocol.prepare(path: "/api", data: data)
+            do { try await client().testConnection(); XCTFail("Expected invalid API response for \(message)") }
+            catch let error as HAClientError { XCTAssertEqual(error, .invalidResponse) }
+        }
+    }
+
     func testProductionSessionBoundsRequestAndTotalResourceTime() throws {
         for timeout in [3.0, 7, 120] {
             let configuration = try HomeAssistantClient.sessionConfiguration(timeout: timeout)

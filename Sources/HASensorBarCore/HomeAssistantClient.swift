@@ -72,7 +72,7 @@ public actor HomeAssistantClient: HAClient {
         struct Status: Decodable { let message: String }
         let data = try await request(path: "api/")
         guard let status = try? JSONDecoder().decode(Status.self, from: data),
-              !status.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              status.message == "API running."
         else { throw HAClientError.invalidResponse }
     }
 
